@@ -1,5 +1,6 @@
 library(dplyr)
 library(openxlsx2)
+library(suntools)
 
 setwd("/home/kaelyn/Desktop/Bats_NW/WPZ_acoustic")
 
@@ -13,14 +14,22 @@ sbat_list <- lapply(sonobat_txt_files, read.delim) |>
 # Format like XLSX
 
 zoo_data_format <- function(sonobat_df) {
+    wpz_coords <- matrix(c(-122.35083578760666, 47.66851544625889), nrow = 1)
+    
+    # determine if before or after midnight, then add appropriate sunrise/set times
+    
     zdf <- sonobat_df %>%
         mutate(posix = strptime(gsub(":", "", Timestamp),
                                 format = "%Y-%m-%dT%H%M%OS%z")) %>%
         mutate(Month = format(posix, "%B"),
                Date = as.Date(posix),
-               Time = as.numeric(posix) %% 86400 / 86400) %>%
-        mutate(Sunrise = "",
-               Sunset = "",
+               Time = format(posix, "%I:%M:%S %p")) %>%
+        mutate(#Sunrise = sunriset(wpz_coords, as.POSIXct(posix),
+                #                  direction = "sunrise",
+                #                  POSIXct.out = TRUE)$time,
+               #Sunset = sunriset(wpz_coords, as.POSIXct(posix),
+                #                 direction = "sunset",
+                #                 POSIXct.out = TRUE)$time,
                `Elapsed (hr)` = "") %>%
         mutate(SppAccp = case_when(SppAccp == "x" ~ "", .default = SppAccp),
                HiF = case_when(HiF == "x" ~ "", .default = HiF),
@@ -50,11 +59,11 @@ sheet_name <- "2026Data"
 exist_rows <- nrow(wb_read(wb, sheet_name, col_names = FALSE))
 wb <- wb_add_data(wb, sheet_name, zd_df,
                   start_row = exist_rows + 1, col_names = FALSE)
-wb <- wb_add_numfmt(wb, sheet_name,
-                    dims = wb_dims(
-                        rows = (exist_rows + 1):(exist_rows + nrow(zd_df)),
-                        cols = 3),
-                    numfmt = 20)
+#wb <- wb_add_numfmt(wb, sheet_name,
+#                    dims = wb_dims(
+#                        rows = (exist_rows + 1):(exist_rows + nrow(zd_df)),
+#                        cols = 3),
+#                    numfmt = 20)
 wb <- wb_set_col_widths(wb,
                         sheet = sheet_name,
                         cols = 1:ncol(zd_df),
@@ -62,3 +71,4 @@ wb <- wb_set_col_widths(wb,
 new_path <- file.path(getwd(), "xlsx_files", 
                      paste0("ZooData2026_", Sys.Date(), ".xlsx"))
 wb_save(wb, new_path, overwrite = TRUE)
+
