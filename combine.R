@@ -1,4 +1,7 @@
 library(dplyr)
+library(readr)
+library(lubridate)
+library(hms)
 library(openxlsx2)
 library(suntools)
 
@@ -8,39 +11,45 @@ setwd("/home/kaelyn/Desktop/Bats_NW/WPZ_acoustic")
 sonobat_txt_dir <- file.path(getwd(), "sonobat_txt", "2026")
 sonobat_txt_files <- list.files(sonobat_txt_dir, full.names = TRUE)
 
-sbat_list <- lapply(sonobat_txt_files, read.delim) |>
+sbat_list <- lapply(sonobat_txt_files, function(x) {
+    read_delim(x, col_types = cols(.default = "c"))
+    }) |>
     setNames(basename(sonobat_txt_files))
 
 # Format like XLSX
 
-zoo_data_format <- function(sonobat_df) {
-    wpz_coords <- matrix(c(-122.35083578760666, 47.66851544625889), nrow = 1)
-    
-    # determine if before or after midnight, then add appropriate sunrise/set times
-    
+wpz_coords <- matrix(c(-122.35083578760666, 47.66851544625889), nrow = 1)
+tz <- "America/Los_Angeles"
+
+zoo_data_format <- function(sonobat_df, tz, crds) {
     zdf <- sonobat_df %>%
-        mutate(posix = strptime(gsub(":", "", Timestamp),
-                                format = "%Y-%m-%dT%H%M%OS%z")) %>%
-        mutate(Month = format(posix, "%B"),
-               Date = as.Date(posix),
-               Time = format(posix, "%I:%M:%S %p")) %>%
-        mutate(#Sunrise = sunriset(wpz_coords, as.POSIXct(posix),
-                #                  direction = "sunrise",
-                #                  POSIXct.out = TRUE)$time,
-               #Sunset = sunriset(wpz_coords, as.POSIXct(posix),
-                #                 direction = "sunset",
-                #                 POSIXct.out = TRUE)$time,
-               `Elapsed (hr)` = "") %>%
+        mutate(posix = parse_date_time(Timestamp, "YmdHMOSz")) %>%
+        mutate(lposix = with_tz(posix, tz)) %>%
+        mutate(Month = month(lposix, label = TRUE),
+               Date = date(lposix),
+               Time = format(lposix, "%I:%M:%S %p"),
+               night_date = parse_date_time(MonitoringNight,
+                                            orders = c("mdy", "ymd"),
+                                            tz = tz)) %>%
+        mutate(Sunset = sunriset(crds, night_date, direction = "sunset",
+                                 POSIXct.out = TRUE)$time,
+               Sunrise = sunriset(crds, night_date, direction = "sunrise",
+                                  POSIXct.out = TRUE)$time,
+               `Elapsed (hr)` = time_length(interval(Sunset, lposix),
+                                            "hour")) %>%
+        mutate(Sunset = format(Sunset, "%I:%M:%S %p"),
+               Sunrise = format(Sunrise, "%I:%M:%S %p")) %>%
         mutate(SppAccp = case_when(SppAccp == "x" ~ "", .default = SppAccp),
                HiF = case_when(HiF == "x" ~ "", .default = HiF),
                LoF = case_when(LoF == "x" ~ "", .default = LoF)) %>%
+        mutate(dst = dst(lposix)) %>%
         rename(Species = SppAccp,
-               Temp = Temperature.Int)
+               Temp = `Temperature Int`)
 }
 
-zd_list <- lapply(sbat_list, zoo_data_format)
+zd_list <- lapply(sbat_list, function(x) zoo_data_format(x, tz, wpz_coords))
 
-# Combine months
+# Combine months and arrange data
 zd_df <- bind_rows(zd_list) %>%
     group_by(Month) %>%
     mutate(`Month Ind` = case_when(posix == min(posix) ~ 
