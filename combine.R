@@ -1,9 +1,20 @@
+# general data handling
 library(dplyr)
 library(readr)
+library(tidyr)
+
+# date-time handling
 library(lubridate)
 library(hms)
+
+# XLSX handling
 library(openxlsx2)
+
+# get sunrise/sunset data
 library(suntools)
+
+# get temperature data
+library(readnoaa)
 
 setwd("/home/kaelyn/Desktop/Bats_NW/WPZ_acoustic")
 
@@ -21,7 +32,7 @@ sbat_list <- lapply(sonobat_txt_files, function(x) {
 wpz_coords <- matrix(c(-122.35083578760666, 47.66851544625889), nrow = 1)
 tz <- "America/Los_Angeles"
 
-zoo_data_format <- function(sonobat_df, tz, crds) {
+create_zoo_data <- function(sonobat_df, tz, crds) {
     zdf <- sonobat_df %>%
         mutate(posix = parse_date_time(Timestamp, "YmdHMOSz")) %>%
         mutate(lposix = with_tz(posix, tz)) %>%
@@ -39,17 +50,21 @@ zoo_data_format <- function(sonobat_df, tz, crds) {
                                             "hour")) %>%
         mutate(Sunset = format(Sunset, "%I:%M:%S %p"),
                Sunrise = format(Sunrise, "%I:%M:%S %p")) %>%
-        mutate(SppAccp = case_when(SppAccp == "x" ~ "", .default = SppAccp),
-               HiF = case_when(HiF == "x" ~ "", .default = HiF),
-               LoF = case_when(LoF == "x" ~ "", .default = LoF)) %>%
+        mutate(SppAccp = case_when(SppAccp == "x" ~ NA, .default = SppAccp),
+               HiF = case_when(HiF == "x" ~ NA, .default = "HiF"),
+               LoF = case_when(LoF == "x" ~ NA, .default = "LoF")) %>%
+        unite("FSpec", HiF, LoF, sep = "/", remove = FALSE, na.rm = TRUE) %>%
+        mutate(FSpec = case_when(FSpec == "" ~ "NoID", .default = FSpec),
+               Species = coalesce(SppAccp, FSpec)) %>%
         mutate(dst = dst(lposix)) %>%
-        rename(Species = SppAccp,
-               Temp = `Temperature Int`)
+        rename(Temp = `Temperature Int`)
 }
 
-zd_list <- lapply(sbat_list, function(x) zoo_data_format(x, tz, wpz_coords))
+zd_list <- lapply(sbat_list, function(x) create_zoo_data(x, tz, wpz_coords))
 
-# Combine months and arrange data
+# Combine months, add dummy rows, and arrange data
+noaa_station <- noaa_nearby(wpz_coords[2], wpz_coords[1])$station[1]
+
 zd_df <- bind_rows(zd_list) %>%
     group_by(Month) %>%
     mutate(`Month Ind` = case_when(posix == min(posix) ~ 
@@ -57,6 +72,7 @@ zd_df <- bind_rows(zd_list) %>%
                                    .default = "")) %>%
     ungroup() %>%
     arrange(posix) %>%
+    
     select(Month, Date, Time, Sunrise, Sunset, `Elapsed (hr)`, Species,
            Timestamp, Temp, HiF, LoF, `Month Ind`)
 
